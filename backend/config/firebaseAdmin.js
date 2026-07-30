@@ -9,7 +9,14 @@ const __dirname = path.dirname(__filename);
 let serviceAccount;
 let initialized = false;
 
-if (process.env.FIREBASE_SERVICE_ACCOUNT_KEY) {
+if (process.env.FIREBASE_PROJECT_ID && process.env.FIREBASE_CLIENT_EMAIL && process.env.FIREBASE_PRIVATE_KEY) {
+  serviceAccount = {
+    type: "service_account",
+    project_id: process.env.FIREBASE_PROJECT_ID,
+    client_email: process.env.FIREBASE_CLIENT_EMAIL,
+    private_key: process.env.FIREBASE_PRIVATE_KEY.replace(/\\n/g, '\n'),
+  };
+} else if (process.env.FIREBASE_SERVICE_ACCOUNT_KEY) {
   try {
     serviceAccount = JSON.parse(process.env.FIREBASE_SERVICE_ACCOUNT_KEY);
   } catch (error) {
@@ -21,7 +28,7 @@ if (process.env.FIREBASE_SERVICE_ACCOUNT_KEY) {
     const fileContent = fs.readFileSync(serviceAccountPath, "utf8");
     serviceAccount = JSON.parse(fileContent);
   } catch (error) {
-    console.warn("Could not load serviceAccountKey.json locally. Ensure FIREBASE_SERVICE_ACCOUNT_KEY is set in production.");
+    console.warn("Could not load serviceAccountKey.json locally. Ensure FIREBASE_* environment variables are set in production.");
   }
 }
 
