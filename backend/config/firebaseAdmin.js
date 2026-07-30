@@ -1,11 +1,36 @@
 import admin from "firebase-admin";
-import serviceAccount from "./serviceAccountKey.json" with { type: "json" };
+import fs from "fs";
+import path from "path";
+import { fileURLToPath } from "url";
 
+const __filename = fileURLToPath(import.meta.url);
+const __dirname = path.dirname(__filename);
+
+let serviceAccount;
 let initialized = false;
+
+if (process.env.FIREBASE_SERVICE_ACCOUNT_KEY) {
+  try {
+    serviceAccount = JSON.parse(process.env.FIREBASE_SERVICE_ACCOUNT_KEY);
+  } catch (error) {
+    throw new Error("Failed to parse FIREBASE_SERVICE_ACCOUNT_KEY environment variable. Ensure it is valid JSON.");
+  }
+} else {
+  try {
+    const serviceAccountPath = path.resolve(__dirname, "./serviceAccountKey.json");
+    const fileContent = fs.readFileSync(serviceAccountPath, "utf8");
+    serviceAccount = JSON.parse(fileContent);
+  } catch (error) {
+    console.warn("Could not load serviceAccountKey.json locally. Ensure FIREBASE_SERVICE_ACCOUNT_KEY is set in production.");
+  }
+}
 
 const REQUIRED_SERVICE_ACCOUNT_KEYS = ["type", "project_id", "private_key", "client_email"];
 
 const validateServiceAccount = () => {
+  if (!serviceAccount) {
+    throw new Error("Firebase service account is missing.");
+  }
   for (const key of REQUIRED_SERVICE_ACCOUNT_KEYS) {
     if (!serviceAccount?.[key] || typeof serviceAccount[key] !== "string") {
       throw new Error(`Firebase service account is invalid: missing string "${key}"`);
