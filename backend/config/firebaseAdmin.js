@@ -1,13 +1,11 @@
 import admin from "firebase-admin";
-import fs from "fs";
-import path from "path";
-import { fileURLToPath } from "url";
 
-const __filename = fileURLToPath(import.meta.url);
-const __dirname = path.dirname(__filename);
-
-let serviceAccount;
 let initialized = false;
+const REQUIRED_FIREBASE_ENV_VARS = [
+  "FIREBASE_PROJECT_ID",
+  "FIREBASE_CLIENT_EMAIL",
+  "FIREBASE_PRIVATE_KEY",
+];
 
 const normalizePrivateKey = (privateKey) => {
   if (typeof privateKey !== "string") {
@@ -27,47 +25,54 @@ const normalizePrivateKey = (privateKey) => {
   return normalized.replace(/\\n/g, "\n");
 };
 
-if (process.env.FIREBASE_PROJECT_ID && process.env.FIREBASE_CLIENT_EMAIL && process.env.FIREBASE_PRIVATE_KEY) {
-  serviceAccount = {
-    type: "service_account",
-    project_id: process.env.FIREBASE_PROJECT_ID,
-    client_email: process.env.FIREBASE_CLIENT_EMAIL,
-    private_key: normalizePrivateKey(process.env.FIREBASE_PRIVATE_KEY),
-  };
-} else if (process.env.FIREBASE_SERVICE_ACCOUNT_KEY) {
-  try {
-    serviceAccount = JSON.parse(process.env.FIREBASE_SERVICE_ACCOUNT_KEY);
-    if (serviceAccount?.private_key) {
-      serviceAccount.private_key = normalizePrivateKey(serviceAccount.private_key);
-    }
-  } catch (error) {
-    throw new Error("Failed to parse FIREBASE_SERVICE_ACCOUNT_KEY environment variable. Ensure it is valid JSON.");
-  }
-} else {
-  try {
-    const serviceAccountPath = path.resolve(__dirname, "./serviceAccountKey.json");
-    const fileContent = fs.readFileSync(serviceAccountPath, "utf8");
-    serviceAccount = JSON.parse(fileContent);
-  } catch (error) {
-    console.warn("Could not load serviceAccountKey.json locally. Ensure FIREBASE_* environment variables are set in production.");
-  }
-}
+const buildServiceAccountFromEnv = () => ({
+  type: "service_account",
+  project_id: process.env.FIREBASE_PROJECT_ID,
+  client_email: process.env.FIREBASE_CLIENT_EMAIL,
+  private_key: normalizePrivateKey(process.env.FIREBASE_PRIVATE_KEY),
+});
 
-const REQUIRED_SERVICE_ACCOUNT_KEYS = ["type", "project_id", "private_key", "client_email"];
+const validateFirebaseEnv = () => {
+  const missingVars = REQUIRED_FIREBASE_ENV_VARS.filter((key) => {
+    const value = process.env[key];
+    return typeof value !== "string" || value.trim() === "";
+  });
 
-const validateServiceAccount = () => {
-  if (!serviceAccount) {
-    throw new Error("Firebase service account is missing.");
-  }
-  for (const key of REQUIRED_SERVICE_ACCOUNT_KEYS) {
-    if (!serviceAccount?.[key] || typeof serviceAccount[key] !== "string") {
-      throw new Error(`Firebase service account is invalid: missing string "${key}"`);
-    }
+  console.log(
+    process.env.FIREBASE_PROJECT_ID
+      ? "Firebase startup: FIREBASE_PROJECT_ID loaded"
+      : "Firebase startup: FIREBASE_PROJECT_ID missing"
+  );
+  console.log(
+    process.env.FIREBASE_CLIENT_EMAIL
+      ? "Firebase startup: FIREBASE_CLIENT_EMAIL loaded"
+      : "Firebase startup: FIREBASE_CLIENT_EMAIL missing"
+  );
+  console.log(
+    process.env.FIREBASE_PRIVATE_KEY
+      ? "Firebase startup: FIREBASE_PRIVATE_KEY detected"
+      : "Firebase startup: FIREBASE_PRIVATE_KEY missing"
+  );
+
+  if (process.env.FIREBASE_SERVICE_ACCOUNT_KEY) {
+    console.warn("Firebase startup: FIREBASE_SERVICE_ACCOUNT_KEY is set but ignored. Remove it to avoid config drift.");
   }
 
-  if (!serviceAccount.private_key.includes("BEGIN PRIVATE KEY") || !serviceAccount.private_key.includes("END PRIVATE KEY")) {
+  if (missingVars.length > 0) {
+    throw new Error(`Firebase configuration is incomplete. Missing: ${missingVars.join(", ")}`);
+  }
+
+  const normalizedPrivateKey = normalizePrivateKey(process.env.FIREBASE_PRIVATE_KEY);
+
+  if (
+    !normalizedPrivateKey.includes("BEGIN PRIVATE KEY") ||
+    !normalizedPrivateKey.includes("END PRIVATE KEY")
+  ) {
+    console.error("Firebase startup: FIREBASE_PRIVATE_KEY malformed");
     throw new Error('Firebase service account is invalid: "private_key" is not a valid PEM block');
   }
+
+  console.log("Firebase startup: FIREBASE_PRIVATE_KEY format looks valid");
 };
 
 const initializeFirebaseAdmin = () => {
@@ -76,7 +81,8 @@ const initializeFirebaseAdmin = () => {
     return admin.app();
   }
 
-  validateServiceAccount();
+  validateFirebaseEnv();
+  const serviceAccount = buildServiceAccountFromEnv();
 
   try {
     admin.initializeApp({
