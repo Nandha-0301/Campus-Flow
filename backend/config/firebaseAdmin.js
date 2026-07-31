@@ -9,16 +9,37 @@ const __dirname = path.dirname(__filename);
 let serviceAccount;
 let initialized = false;
 
+const normalizePrivateKey = (privateKey) => {
+  if (typeof privateKey !== "string") {
+    return privateKey;
+  }
+
+  let normalized = privateKey.trim();
+
+  // Render and similar platforms may preserve surrounding quotes from env values.
+  if (
+    (normalized.startsWith('"') && normalized.endsWith('"')) ||
+    (normalized.startsWith("'") && normalized.endsWith("'"))
+  ) {
+    normalized = normalized.slice(1, -1);
+  }
+
+  return normalized.replace(/\\n/g, "\n");
+};
+
 if (process.env.FIREBASE_PROJECT_ID && process.env.FIREBASE_CLIENT_EMAIL && process.env.FIREBASE_PRIVATE_KEY) {
   serviceAccount = {
     type: "service_account",
     project_id: process.env.FIREBASE_PROJECT_ID,
     client_email: process.env.FIREBASE_CLIENT_EMAIL,
-    private_key: process.env.FIREBASE_PRIVATE_KEY.replace(/\\n/g, '\n'),
+    private_key: normalizePrivateKey(process.env.FIREBASE_PRIVATE_KEY),
   };
 } else if (process.env.FIREBASE_SERVICE_ACCOUNT_KEY) {
   try {
     serviceAccount = JSON.parse(process.env.FIREBASE_SERVICE_ACCOUNT_KEY);
+    if (serviceAccount?.private_key) {
+      serviceAccount.private_key = normalizePrivateKey(serviceAccount.private_key);
+    }
   } catch (error) {
     throw new Error("Failed to parse FIREBASE_SERVICE_ACCOUNT_KEY environment variable. Ensure it is valid JSON.");
   }
@@ -42,6 +63,10 @@ const validateServiceAccount = () => {
     if (!serviceAccount?.[key] || typeof serviceAccount[key] !== "string") {
       throw new Error(`Firebase service account is invalid: missing string "${key}"`);
     }
+  }
+
+  if (!serviceAccount.private_key.includes("BEGIN PRIVATE KEY") || !serviceAccount.private_key.includes("END PRIVATE KEY")) {
+    throw new Error('Firebase service account is invalid: "private_key" is not a valid PEM block');
   }
 };
 
