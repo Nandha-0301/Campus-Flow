@@ -3,6 +3,7 @@ import Student from "../models/Student.js";
 import User from "../models/User.js";
 import Settings from "../models/Settings.js";
 import { sendError, sendSuccess } from "../utils/response.js";
+import { getConfiguredFirebaseProjectId } from "../config/firebaseAdmin.js";
 
 const ALLOWED_ROLES = ["admin", "staff", "student", "parent"];
 
@@ -231,7 +232,7 @@ export const getPublicSettings = async (_req, res) => {
       res,
       {
         settings: settings || fallback,
-        firebaseProjectId: process.env.FIREBASE_PROJECT_ID || null,
+        firebaseProjectId: getConfiguredFirebaseProjectId(),
       },
       "Settings fetched successfully"
     );

@@ -1,6 +1,8 @@
 import admin from "firebase-admin";
 
 let initialized = false;
+let resolvedProjectId = null;
+
 const REQUIRED_FIREBASE_ENV_VARS = [
   "FIREBASE_PROJECT_ID",
   "FIREBASE_CLIENT_EMAIL",
@@ -24,6 +26,31 @@ const normalizePrivateKey = (privateKey) => {
   return normalized.replace(/\\n/g, "\n");
 };
 
+const deriveProjectIdFromClientEmail = (clientEmail) => {
+  const match = clientEmail?.trim().match(/@([a-z0-9-]+)\.iam\.gserviceaccount\.com$/i);
+  return match?.[1] || null;
+};
+
+export const resolveFirebaseProjectId = () => {
+  if (resolvedProjectId) {
+    return resolvedProjectId;
+  }
+
+  const envProjectId = process.env.FIREBASE_PROJECT_ID?.trim() || null;
+  const emailProjectId = deriveProjectIdFromClientEmail(process.env.FIREBASE_CLIENT_EMAIL);
+
+  if (emailProjectId && envProjectId && emailProjectId !== envProjectId) {
+    console.warn(
+      `Firebase startup: FIREBASE_PROJECT_ID (${envProjectId}) does not match service account project (${emailProjectId}). Using service account project.`
+    );
+    resolvedProjectId = emailProjectId;
+    return resolvedProjectId;
+  }
+
+  resolvedProjectId = emailProjectId || envProjectId;
+  return resolvedProjectId;
+};
+
 const decodeJwtPayload = (token) => {
   if (typeof token !== "string") {
     return null;
@@ -43,12 +70,16 @@ const decodeJwtPayload = (token) => {
   }
 };
 
-const buildServiceAccountFromEnv = () => ({
-  type: "service_account",
-  project_id: process.env.FIREBASE_PROJECT_ID,
-  client_email: process.env.FIREBASE_CLIENT_EMAIL,
-  private_key: normalizePrivateKey(process.env.FIREBASE_PRIVATE_KEY),
-});
+const buildServiceAccountFromEnv = () => {
+  const projectId = resolveFirebaseProjectId();
+
+  return {
+    type: "service_account",
+    project_id: projectId,
+    client_email: process.env.FIREBASE_CLIENT_EMAIL,
+    private_key: normalizePrivateKey(process.env.FIREBASE_PRIVATE_KEY),
+  };
+};
 
 const validateFirebaseEnv = () => {
   const missingVars = REQUIRED_FIREBASE_ENV_VARS.filter((key) => {
@@ -56,10 +87,11 @@ const validateFirebaseEnv = () => {
     return typeof value !== "string" || value.trim() === "";
   });
 
-  const projectId = process.env.FIREBASE_PROJECT_ID?.trim();
+  const envProjectId = process.env.FIREBASE_PROJECT_ID?.trim();
   const clientEmail = process.env.FIREBASE_CLIENT_EMAIL?.trim();
+  const effectiveProjectId = resolveFirebaseProjectId();
 
-  console.log(projectId ? "Firebase startup: FIREBASE_PROJECT_ID loaded" : "Firebase startup: FIREBASE_PROJECT_ID missing");
+  console.log(envProjectId ? "Firebase startup: FIREBASE_PROJECT_ID loaded" : "Firebase startup: FIREBASE_PROJECT_ID missing");
   console.log(
     clientEmail ? "Firebase startup: FIREBASE_CLIENT_EMAIL loaded" : "Firebase startup: FIREBASE_CLIENT_EMAIL missing"
   );
@@ -69,8 +101,8 @@ const validateFirebaseEnv = () => {
       : "Firebase startup: FIREBASE_PRIVATE_KEY missing"
   );
 
-  if (projectId) {
-    console.log(`Firebase startup: Admin SDK projectId=${projectId}`);
+  if (effectiveProjectId) {
+    console.log(`Firebase startup: effective Admin SDK projectId=${effectiveProjectId}`);
   }
 
   if (process.env.FIREBASE_SERVICE_ACCOUNT_KEY) {
@@ -81,11 +113,8 @@ const validateFirebaseEnv = () => {
     throw new Error(`Firebase configuration is incomplete. Missing: ${missingVars.join(", ")}`);
   }
 
-  const expectedEmailSuffix = `@${projectId}.iam.gserviceaccount.com`;
-  if (clientEmail && !clientEmail.endsWith(expectedEmailSuffix)) {
-    console.warn(
-      `Firebase startup: FIREBASE_CLIENT_EMAIL does not match FIREBASE_PROJECT_ID (expected suffix ${expectedEmailSuffix})`
-    );
+  if (!effectiveProjectId) {
+    throw new Error("Firebase configuration is invalid: could not resolve project ID");
   }
 
   const normalizedPrivateKey = normalizePrivateKey(process.env.FIREBASE_PRIVATE_KEY);
@@ -106,11 +135,12 @@ const initializeFirebaseAdmin = () => {
 
   validateFirebaseEnv();
   const serviceAccount = buildServiceAccountFromEnv();
+  const projectId = resolveFirebaseProjectId();
 
   try {
     admin.initializeApp({
       credential: admin.credential.cert(serviceAccount),
-      projectId: process.env.FIREBASE_PROJECT_ID,
+      projectId,
     });
     initialized = true;
     console.log("Firebase Admin Initialized");
@@ -121,7 +151,7 @@ const initializeFirebaseAdmin = () => {
   }
 };
 
-export const getConfiguredFirebaseProjectId = () => process.env.FIREBASE_PROJECT_ID?.trim() || null;
+export const getConfiguredFirebaseProjectId = () => resolveFirebaseProjectId();
 
 export const verifyFirebaseToken = async (token) => {
   if (!token || typeof token !== "string") {
