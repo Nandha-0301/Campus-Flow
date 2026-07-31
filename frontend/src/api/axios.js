@@ -1,9 +1,29 @@
 import axios from "axios";
 import { auth } from "../firebase/config";
 
-const rawBaseURL = import.meta.env.VITE_API_BASE_URL || "http://localhost:5000/api";
-const trimmedBaseURL = rawBaseURL.replace(/\/+$/, "");
-const normalizedBaseURL = trimmedBaseURL.endsWith("/api") ? trimmedBaseURL : `${trimmedBaseURL}/api`;
+const PROD_API_BASE_URL = "https://campus-flow-1-n386.onrender.com/api";
+const DEV_API_BASE_URL = "http://localhost:5000/api";
+const PLACEHOLDER_API_HOST = "YOUR_BACKEND_DOMAIN";
+
+const resolveApiBaseURL = () => {
+  const configuredBaseURL = import.meta.env.VITE_API_BASE_URL?.trim();
+  const isPlaceholderValue =
+    typeof configuredBaseURL === "string" && configuredBaseURL.includes(PLACEHOLDER_API_HOST);
+
+  if (configuredBaseURL && !isPlaceholderValue) {
+    const trimmedBaseURL = configuredBaseURL.replace(/\/+$/, "");
+    return trimmedBaseURL.endsWith("/api") ? trimmedBaseURL : `${trimmedBaseURL}/api`;
+  }
+
+  if (import.meta.env.PROD) {
+    console.warn("VITE_API_BASE_URL is missing or using a placeholder. Falling back to the production API URL.");
+    return PROD_API_BASE_URL;
+  }
+
+  return DEV_API_BASE_URL;
+};
+
+const normalizedBaseURL = resolveApiBaseURL();
 
 const api = axios.create({
   baseURL: normalizedBaseURL,
