@@ -4,7 +4,7 @@ import { createUserWithEmailAndPassword, signInWithEmailAndPassword, signInWithP
 import Navbar from "../components/Navbar";
 import RoleCard from "../components/auth/RoleCard";
 import Loader from "../components/Loader";
-import { getMe, registerUser } from "../api/campusflow";
+import { getMe, registerUser, validateRoleSelection } from "../api/campusflow";
 import { useAuth } from "../context/AuthContext";
 import { rolePathMap } from "../constants/rolePathMap";
 import { auth, googleProvider } from "../firebase/config";
@@ -22,15 +22,17 @@ const Login = () => {
   const [loading, setLoading] = useState(false);
   const [roleErrors, setRoleErrors] = useState({});
 
-  const { user, syncUserFromBackend } = useAuth();
+  const { user, loading: authLoading, syncUserFromBackend } = useAuth();
   const navigate = useNavigate();
 
   useEffect(() => {
+    if (authLoading) return;
     if (user?.role && rolePathMap[user.role]) {
-      navigate(rolePathMap[user.role], { replace: true });
+      const target = rolePathMap[user.role];
+      console.info("Login redirect: authenticated session", { role: user.role, target });
+      navigate(target, { replace: true });
     }
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [user]);
+  }, [user, authLoading, navigate]);
 
   const setRoleError = (selectedRole, message) => {
     setRoleErrors((current) => ({ ...current, [selectedRole]: message }));
@@ -42,15 +44,15 @@ const Login = () => {
 
   const sleep = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
 
-  const fetchMeWithRetry = async (attempts = 3) => {
+  const fetchMeWithRetry = async (firebaseUser, attempts = 3) => {
     let lastError;
     for (let attempt = 1; attempt <= attempts; attempt += 1) {
       try {
-        return await getMe();
+        return await getMe(firebaseUser);
       } catch (error) {
         lastError = error;
         const status = error?.response?.status;
-        const shouldRetry = attempt < attempts && [429, 500].includes(status);
+        const shouldRetry = attempt < attempts && [429, 500, 502, 503].includes(status);
         if (!shouldRetry) {
           throw error;
         }
@@ -60,25 +62,30 @@ const Login = () => {
     throw lastError;
   };
 
-  const resolveAndHydrateBackendUser = async ({ selectedRole, name, email, branch, semester }) => {
-    let me;
-    try {
-      me = await fetchMeWithRetry();
-    } catch (error) {
-      if (error?.response?.status !== 404) {
-        throw error;
-      }
-      await registerUser({ role: selectedRole, name, email, branch, semester });
-      me = await fetchMeWithRetry();
+  const resolveAndHydrateBackendUser = async ({ selectedRole, name, email, branch, semester }, firebaseUser) => {
+    let me = await fetchMeWithRetry(firebaseUser);
+
+    if (!me?.user?.role) {
+      await registerUser({ role: selectedRole, name, email, branch, semester }, firebaseUser);
+      me = await fetchMeWithRetry(firebaseUser);
     }
 
     if (!me?.user?.role) {
-      await registerUser({ role: selectedRole, name, email, branch, semester });
-      me = await fetchMeWithRetry();
+      throw new Error("Could not load your account role. Please try again or contact support.");
     }
 
-    await syncUserFromBackend(me);
+    await syncUserFromBackend(me, firebaseUser);
     return me;
+  };
+
+  const navigateAfterLogin = (accountRole) => {
+    const target = rolePathMap[accountRole];
+    if (!target) {
+      setRoleError("general", `Unknown role "${accountRole}". Contact your administrator.`);
+      return;
+    }
+    console.info("Login success: navigating to dashboard", { role: accountRole, target });
+    navigate(target, { replace: true });
   };
 
   const handleLogin = async (selectedRole, payload) => {
@@ -90,14 +97,23 @@ const Login = () => {
     setLoading(true);
 
     try {
-      await signInWithEmailAndPassword(auth, payload.email, payload.password);
+      const credential = await signInWithEmailAndPassword(auth, payload.email, payload.password);
+      const firebaseUser = credential.user;
 
-      const me = await resolveAndHydrateBackendUser({
-        selectedRole,
-        email: payload.email,
-      });
+      const me = await resolveAndHydrateBackendUser(
+        {
+          selectedRole,
+          email: payload.email,
+        },
+        firebaseUser
+      );
+
+      await validateRoleSelection(selectedRole, firebaseUser);
+      navigateAfterLogin(me.user.role);
     } catch (err) {
-      setRoleError(selectedRole, err?.response?.data?.message || err?.message || "Login failed");
+      const message = err?.response?.data?.message || err?.message || "Login failed";
+      setRoleError(selectedRole, message);
+      console.warn("Login failed:", message);
       if (auth.currentUser) {
         await signOut(auth);
       }
@@ -115,15 +131,21 @@ const Login = () => {
     setLoading(true);
 
     try {
-      await createUserWithEmailAndPassword(auth, payload.email, payload.password);
+      const credential = await createUserWithEmailAndPassword(auth, payload.email, payload.password);
+      const firebaseUser = credential.user;
 
-      const me = await resolveAndHydrateBackendUser({
-        selectedRole,
-        name: payload.name,
-        email: payload.email,
-        branch: payload.branch,
-        semester: payload.semester,
-      });
+      const me = await resolveAndHydrateBackendUser(
+        {
+          selectedRole,
+          name: payload.name,
+          email: payload.email,
+          branch: payload.branch,
+          semester: payload.semester,
+        },
+        firebaseUser
+      );
+
+      navigateAfterLogin(me.user.role);
     } catch (err) {
       setRoleError(selectedRole, err?.response?.data?.message || err?.message || "Signup failed");
       if (auth.currentUser) {
@@ -144,12 +166,22 @@ const Login = () => {
 
     try {
       const credential = await signInWithPopup(auth, googleProvider);
+      const firebaseUser = credential.user;
 
-      const me = await resolveAndHydrateBackendUser({
-        selectedRole,
-        email: credential.user.email,
-        name: credential.user.displayName || "CampusFlow User",
-      });
+      const me = await resolveAndHydrateBackendUser(
+        {
+          selectedRole,
+          email: credential.user.email,
+          name: credential.user.displayName || "CampusFlow User",
+        },
+        firebaseUser
+      );
+
+      if (mode === "login") {
+        await validateRoleSelection(selectedRole, firebaseUser);
+      }
+
+      navigateAfterLogin(me.user.role);
     } catch (err) {
       setRoleError(selectedRole, err?.response?.data?.message || err?.message || "Google login failed");
       if (auth.currentUser) {
@@ -159,6 +191,14 @@ const Login = () => {
       setLoading(false);
     }
   };
+
+  if (authLoading) {
+    return (
+      <div className="flex min-h-screen items-center justify-center bg-indigo-600">
+        <Loader size={32} className="text-white" />
+      </div>
+    );
+  }
 
   return (
     <div className="min-h-screen w-full bg-gradient-to-br from-indigo-600 via-blue-500 to-indigo-700 font-sans">
@@ -235,8 +275,3 @@ const Login = () => {
 };
 
 export default Login;
-
-
-
-
-

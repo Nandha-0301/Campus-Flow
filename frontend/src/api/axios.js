@@ -25,6 +25,17 @@ const resolveApiBaseURL = () => {
 
 const normalizedBaseURL = resolveApiBaseURL();
 
+export const getAuthHeaderForUser = async (firebaseUser = auth.currentUser) => {
+  if (!firebaseUser) {
+    throw new Error("No authenticated Firebase user available");
+  }
+
+  const token = await firebaseUser.getIdToken();
+  return {
+    Authorization: `Bearer ${token}`,
+  };
+};
+
 const api = axios.create({
   baseURL: normalizedBaseURL,
   headers: {

@@ -1,4 +1,4 @@
-import React, { createContext, useContext, useEffect, useRef, useState } from "react";
+import React, { createContext, useCallback, useContext, useEffect, useRef, useState } from "react";
 import {
   createUserWithEmailAndPassword,
   onAuthStateChanged,
@@ -16,95 +16,100 @@ const AuthContext = createContext();
 export const useAuth = () => useContext(AuthContext);
 
 const getRoleHome = (role) => rolePathMap[role] || "/";
-const sleep = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
 
 export const AuthProvider = ({ children }) => {
   const [user, setUser] = useState(null);
   const [role, setRole] = useState(null);
   const [loading, setLoading] = useState(true);
-  const [hasTried, setHasTried] = useState(false);
-  const hasTriedRef = useRef(false);
+  const [firebaseUid, setFirebaseUid] = useState(null);
+  const bootstrapGenerationRef = useRef(0);
 
-  const fetchMeWithRetry = async (attempts = 3) => {
-    let lastError;
-    for (let attempt = 1; attempt <= attempts; attempt += 1) {
-      try {
-        return await getMe();
-      } catch (error) {
-        lastError = error;
-        const status = error?.response?.status;
-        const shouldRetry = attempt < attempts && [429, 500].includes(status);
-        if (!shouldRetry) {
-          throw error;
-        }
-        await sleep(250 * attempt);
-      }
-    }
-    throw lastError;
-  };
-
-  const syncUserFromBackend = async (prefetchedMe = null) => {
-    const me = prefetchedMe || (await fetchMeWithRetry());
-    if (!me?.user) {
+  const syncUserFromBackend = useCallback(async (prefetchedMe = null, firebaseUser = auth.currentUser) => {
+    if (!firebaseUser) {
       setUser(null);
       setRole(null);
       return null;
     }
-    const backendUser = { ...me.user, uid: auth.currentUser?.uid };
+
+    const me = prefetchedMe || (await getMe(firebaseUser));
+    if (!me?.user) {
+      setUser(null);
+      setRole(null);
+      console.info("Auth sync: no backend profile yet", { uid: firebaseUser.uid });
+      return null;
+    }
+
+    const backendUser = { ...me.user, uid: firebaseUser.uid };
     setUser(backendUser);
     setRole(backendUser.role || null);
+    console.info("Auth sync: backend user loaded", {
+      uid: firebaseUser.uid,
+      role: backendUser.role,
+    });
     return backendUser;
-  };
+  }, []);
 
   useEffect(() => {
     const unsubscribe = onAuthStateChanged(auth, async (firebaseUser) => {
-      setLoading(true);
+      const generation = bootstrapGenerationRef.current + 1;
+      bootstrapGenerationRef.current = generation;
 
       if (!firebaseUser) {
+        setFirebaseUid(null);
         setUser(null);
         setRole(null);
-        setHasTried(false);
-        hasTriedRef.current = false;
         setLoading(false);
+        console.info("Auth bootstrap: signed out");
         return;
       }
 
-      if (hasTriedRef.current) {
-        setLoading(false);
-        return;
-      }
+      setFirebaseUid(firebaseUser.uid);
+      setLoading(true);
+      console.info("Auth bootstrap: Firebase user detected", {
+        uid: firebaseUser.uid,
+        email: firebaseUser.email || null,
+      });
 
       try {
-        await syncUserFromBackend();
+        await syncUserFromBackend(null, firebaseUser);
       } catch (err) {
         const status = err?.response?.status;
-        console.error("getMe failed:", err);
-        if (status !== 404) {
+        console.error("Auth bootstrap getMe failed:", {
+          status: status || "network",
+          message: err?.response?.data?.message || err.message,
+        });
+        if (status === 401 || status === 403) {
           try {
             await signOut(auth);
           } catch (signOutError) {
             console.error("Failed to sign out after auth error:", signOutError);
           }
+          if (bootstrapGenerationRef.current === generation) {
+            setUser(null);
+            setRole(null);
+            setFirebaseUid(null);
+          }
         }
-        setUser(null);
-        setRole(null);
       } finally {
-        hasTriedRef.current = true;
-        setHasTried(true);
-        setLoading(false);
+        if (bootstrapGenerationRef.current === generation) {
+          setLoading(false);
+        }
       }
     });
 
     return () => unsubscribe();
-  }, []);
+  }, [syncUserFromBackend]);
 
   const loginWithEmail = async (email, password, selectedRole) => {
     try {
-      await signInWithEmailAndPassword(auth, email, password);
-      const validation = await validateRoleSelection(selectedRole);
-      const backendUser = await syncUserFromBackend();
-      const roleFromDb = backendUser?.role;
-      return validation?.redirectPath || getRoleHome(roleFromDb);
+      const credential = await signInWithEmailAndPassword(auth, email, password);
+      const firebaseUser = credential.user;
+      const backendUser = await syncUserFromBackend(null, firebaseUser);
+      if (!backendUser?.role) {
+        throw new Error("Account is not registered in CampusFlow. Please sign up first.");
+      }
+      await validateRoleSelection(selectedRole, firebaseUser);
+      return getRoleHome(backendUser.role);
     } catch (error) {
       if (auth.currentUser) {
         await signOut(auth);
@@ -117,11 +122,14 @@ export const AuthProvider = ({ children }) => {
 
   const loginWithGoogle = async (selectedRole) => {
     try {
-      await signInWithPopup(auth, googleProvider);
-      const validation = await validateRoleSelection(selectedRole);
-      const backendUser = await syncUserFromBackend();
-      const roleFromDb = backendUser?.role;
-      return validation?.redirectPath || getRoleHome(roleFromDb);
+      const credential = await signInWithPopup(auth, googleProvider);
+      const firebaseUser = credential.user;
+      const backendUser = await syncUserFromBackend(null, firebaseUser);
+      if (!backendUser?.role) {
+        throw new Error("Account is not registered in CampusFlow. Please complete registration.");
+      }
+      await validateRoleSelection(selectedRole, firebaseUser);
+      return getRoleHome(backendUser.role);
     } catch (error) {
       if (auth.currentUser) {
         await signOut(auth);
@@ -135,8 +143,7 @@ export const AuthProvider = ({ children }) => {
     await signOut(auth);
     setUser(null);
     setRole(null);
-    setHasTried(false);
-    hasTriedRef.current = false;
+    setFirebaseUid(null);
     setLoading(false);
   };
 
@@ -144,7 +151,7 @@ export const AuthProvider = ({ children }) => {
     user,
     role,
     loading,
-    hasTried,
+    firebaseUid,
     loginWithEmail,
     signupWithEmail,
     loginWithGoogle,
@@ -153,16 +160,5 @@ export const AuthProvider = ({ children }) => {
     syncUserFromBackend,
   };
 
-  return <AuthContext.Provider value={value}>{!loading && children}</AuthContext.Provider>;
+  return <AuthContext.Provider value={value}>{children}</AuthContext.Provider>;
 };
-
-
-
-
-
-
-
-
-
-
-

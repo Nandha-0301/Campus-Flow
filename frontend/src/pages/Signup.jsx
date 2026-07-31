@@ -18,17 +18,18 @@ const Signup = () => {
   const [error, setError] = useState('');
   const [isSubmitting, setIsSubmitting] = useState(false);
 
-  const { signupWithEmail, user, syncUserFromBackend } = useAuth();
+  const { signupWithEmail, user, loading: authLoading, syncUserFromBackend } = useAuth();
   const { settings, loading: settingsLoading } = useSettings();
   const navigate = useNavigate();
 
   const registrationDisabled = !settingsLoading && settings?.allowRegistration === false;
 
   useEffect(() => {
+    if (authLoading) return;
     if (user?.role && rolePathMap[user.role]) {
       navigate(rolePathMap[user.role], { replace: true });
     }
-  }, [user, navigate]);
+  }, [user, authLoading, navigate]);
 
   const sleep = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
 
@@ -36,7 +37,7 @@ const Signup = () => {
     let lastError;
     for (let attempt = 1; attempt <= attempts; attempt += 1) {
       try {
-        return await getMe();
+        return await getMe(auth.currentUser);
       } catch (err) {
         lastError = err;
         const status = err?.response?.status;
@@ -69,16 +70,19 @@ const Signup = () => {
         if (fetchErr?.response?.status !== 404) {
           throw fetchErr;
         }
-        await registerUser({ name, email, role: selectedRole });
+        await registerUser({ name, email, role: selectedRole }, auth.currentUser);
         me = await fetchMeWithRetry();
       }
 
       if (!me?.user?.role) {
-        await registerUser({ name, email, role: selectedRole });
+        await registerUser({ name, email, role: selectedRole }, auth.currentUser);
         me = await fetchMeWithRetry();
       }
 
-      await syncUserFromBackend(me);
+      const backendUser = await syncUserFromBackend(me, auth.currentUser);
+      if (backendUser?.role && rolePathMap[backendUser.role]) {
+        navigate(rolePathMap[backendUser.role], { replace: true });
+      }
     } catch (err) {
       if (err.code === 'auth/email-already-in-use') {
         setError('This email is already registered.');

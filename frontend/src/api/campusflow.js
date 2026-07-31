@@ -1,4 +1,4 @@
-import api from "./axios";
+import api, { getAuthHeaderForUser } from "./axios";
 
 const unwrap = (response) => {
   const payload = response.data;
@@ -16,6 +16,21 @@ const unwrapWithMeta = (response) => {
   return { data: payload, meta: undefined };
 };
 
+const withFirebaseUserConfig = async (config = {}, firebaseUser = null) => {
+  if (!firebaseUser) {
+    return config;
+  }
+
+  const authHeaders = await getAuthHeaderForUser(firebaseUser);
+  return {
+    ...config,
+    headers: {
+      ...(config.headers || {}),
+      ...authHeaders,
+    },
+  };
+};
+
 const get = async (url, config) => unwrap(await api.get(url, config));
 const getWithMeta = async (url, config) => unwrapWithMeta(await api.get(url, config));
 const post = async (url, payload, config) => unwrap(await api.post(url, payload, config));
@@ -23,11 +38,13 @@ const put = async (url, payload, config) => unwrap(await api.put(url, payload, c
 const del = async (url, config) => unwrap(await api.delete(url, config));
 const patch = async (url, payload, config) => unwrap(await api.patch(url, payload, config));
 
-export const getMe = async () => get("/auth/me");
+export const getMe = async (firebaseUser = null) => get("/auth/me", await withFirebaseUserConfig({}, firebaseUser));
 export const getPublicSettings = async () => get("/auth/settings");
 
-export const validateRoleSelection = async (selectedRole) => post("/auth/validate-role", { selectedRole });
-export const registerUser = async (payload) => post("/auth/register", payload);
+export const validateRoleSelection = async (selectedRole, firebaseUser = null) =>
+  post("/auth/validate-role", { selectedRole }, await withFirebaseUserConfig({}, firebaseUser));
+export const registerUser = async (payload, firebaseUser = null) =>
+  post("/auth/register", payload, await withFirebaseUserConfig({}, firebaseUser));
 
 export const getSubjects = async () => {
   const response = await api.get("/subjects");

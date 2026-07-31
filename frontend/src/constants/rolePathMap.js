@@ -1,7 +1,6 @@
 export const rolePathMap = {
-  admin: "/admin",
-  staff: "/staff",
-  student: "/student",
-  parent: "/parent",
+  admin: "/admin/dashboard",
+  staff: "/staff/dashboard",
+  student: "/student/dashboard",
+  parent: "/parent/dashboard",
 };
-

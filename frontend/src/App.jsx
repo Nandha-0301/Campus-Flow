@@ -67,7 +67,8 @@ function App() {
                 </ProtectedRoute>
               }
             >
-              <Route index element={<AdminDashboard />} />
+              <Route index element={<Navigate to="dashboard" replace />} />
+              <Route path="dashboard" element={<AdminDashboard />} />
               <Route path="staff" element={<ManageStaff />} />
               <Route path="academics" element={<Academics />} />
               <Route path="announcements" element={<AdminAnnouncements />} />
@@ -86,7 +87,8 @@ function App() {
                 </ProtectedRoute>
               }
             >
-              <Route index element={<StaffDashboard />} />
+              <Route index element={<Navigate to="dashboard" replace />} />
+              <Route path="dashboard" element={<StaffDashboard />} />
               <Route path="classes" element={<StaffClasses />} />
               <Route path="timetable" element={<StaffTimetable />} />
               <Route path="students" element={<StaffStudents />} />
@@ -96,6 +98,26 @@ function App() {
               <Route path="announcements" element={<StaffAnnouncements />} />
             </Route>
 
+            <Route
+              path="/student"
+              element={
+                <ProtectedRoute>
+                  <RoleProtectedRoute role="student">
+                    <StudentDashboard />
+                  </RoleProtectedRoute>
+                </ProtectedRoute>
+              }
+            />
+            <Route
+              path="/student/dashboard"
+              element={
+                <ProtectedRoute>
+                  <RoleProtectedRoute role="student">
+                    <StudentDashboard />
+                  </RoleProtectedRoute>
+                </ProtectedRoute>
+              }
+            />
             <Route
               path="/student/*"
               element={
@@ -107,6 +129,26 @@ function App() {
               }
             />
 
+            <Route
+              path="/parent"
+              element={
+                <ProtectedRoute>
+                  <RoleProtectedRoute role="parent">
+                    <ParentDashboard />
+                  </RoleProtectedRoute>
+                </ProtectedRoute>
+              }
+            />
+            <Route
+              path="/parent/dashboard"
+              element={
+                <ProtectedRoute>
+                  <RoleProtectedRoute role="parent">
+                    <ParentDashboard />
+                  </RoleProtectedRoute>
+                </ProtectedRoute>
+              }
+            />
             <Route
               path="/parent/*"
               element={

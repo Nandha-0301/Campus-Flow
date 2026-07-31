@@ -16,7 +16,7 @@ import {
 
 const roleLinks = {
   admin: [
-    { name: "Dashboard", path: "/admin", icon: Home },
+    { name: "Dashboard", path: "/admin/dashboard", icon: Home },
     { name: "Staff", path: "/admin/staff", icon: Users },
     { name: "Academics", path: "/admin/academics", icon: BookOpen },
     { name: "Announcements", path: "/admin/announcements", icon: BookOpen },
@@ -25,7 +25,7 @@ const roleLinks = {
     { name: "Settings", path: "/admin/settings", icon: Settings },
   ],
   staff: [
-    { name: "Dashboard", path: "/staff", icon: Home },
+    { name: "Dashboard", path: "/staff/dashboard", icon: Home },
     { name: "My Classes", path: "/staff/classes", icon: LayoutGrid },
     { name: "Timetable", path: "/staff/timetable", icon: Calendar },
     { name: "Students", path: "/staff/students", icon: Users },
@@ -35,19 +35,19 @@ const roleLinks = {
     { name: "Announcements", path: "/staff/announcements", icon: Bell },
   ],
   student: [
-    { name: "Dashboard", path: "/student", icon: Home },
+    { name: "Dashboard", path: "/student/dashboard", icon: Home },
     { name: "My Attendance", path: "/student/attendance", icon: CheckSquare },
     { name: "My Marks", path: "/student/marks", icon: BarChart2 },
   ],
   parent: [
-    { name: "Dashboard", path: "/parent", icon: Home },
+    { name: "Dashboard", path: "/parent/dashboard", icon: Home },
     { name: "Child Performance", path: "/parent/performance", icon: BarChart2 },
   ],
 };
 
 const Sidebar = ({ collapsed = false, toggleSidebar }) => {
   const { role } = useAuth();
-  const links = roleLinks[role] || roleLinks.admin;
+  const links = roleLinks[role] || [];
 
   return (
     <>
@@ -85,7 +85,12 @@ const Sidebar = ({ collapsed = false, toggleSidebar }) => {
                 <NavLink
                   key={link.path}
                   to={link.path}
-                  end={["/admin", "/staff", "/student", "/parent"].includes(link.path)}
+                  end={[
+                    "/admin/dashboard",
+                    "/staff/dashboard",
+                    "/student/dashboard",
+                    "/parent/dashboard",
+                  ].includes(link.path)}
                   title={collapsed ? link.name : undefined}
                   className={({ isActive }) =>
                     `group flex items-center border-l-[3px] py-3 text-sm font-semibold transition-all duration-200 ${
