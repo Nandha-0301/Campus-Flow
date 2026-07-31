@@ -14,7 +14,6 @@ const normalizePrivateKey = (privateKey) => {
 
   let normalized = privateKey.trim();
 
-  // Render and similar platforms may preserve surrounding quotes from env values.
   if (
     (normalized.startsWith('"') && normalized.endsWith('"')) ||
     (normalized.startsWith("'") && normalized.endsWith("'"))
@@ -23,6 +22,25 @@ const normalizePrivateKey = (privateKey) => {
   }
 
   return normalized.replace(/\\n/g, "\n");
+};
+
+const decodeJwtPayload = (token) => {
+  if (typeof token !== "string") {
+    return null;
+  }
+
+  const parts = token.split(".");
+  if (parts.length !== 3) {
+    return null;
+  }
+
+  try {
+    const base64 = parts[1].replace(/-/g, "+").replace(/_/g, "/");
+    const padded = base64 + "=".repeat((4 - (base64.length % 4)) % 4);
+    return JSON.parse(Buffer.from(padded, "base64").toString("utf8"));
+  } catch {
+    return null;
+  }
 };
 
 const buildServiceAccountFromEnv = () => ({
@@ -38,21 +56,22 @@ const validateFirebaseEnv = () => {
     return typeof value !== "string" || value.trim() === "";
   });
 
+  const projectId = process.env.FIREBASE_PROJECT_ID?.trim();
+  const clientEmail = process.env.FIREBASE_CLIENT_EMAIL?.trim();
+
+  console.log(projectId ? "Firebase startup: FIREBASE_PROJECT_ID loaded" : "Firebase startup: FIREBASE_PROJECT_ID missing");
   console.log(
-    process.env.FIREBASE_PROJECT_ID
-      ? "Firebase startup: FIREBASE_PROJECT_ID loaded"
-      : "Firebase startup: FIREBASE_PROJECT_ID missing"
-  );
-  console.log(
-    process.env.FIREBASE_CLIENT_EMAIL
-      ? "Firebase startup: FIREBASE_CLIENT_EMAIL loaded"
-      : "Firebase startup: FIREBASE_CLIENT_EMAIL missing"
+    clientEmail ? "Firebase startup: FIREBASE_CLIENT_EMAIL loaded" : "Firebase startup: FIREBASE_CLIENT_EMAIL missing"
   );
   console.log(
     process.env.FIREBASE_PRIVATE_KEY
       ? "Firebase startup: FIREBASE_PRIVATE_KEY detected"
       : "Firebase startup: FIREBASE_PRIVATE_KEY missing"
   );
+
+  if (projectId) {
+    console.log(`Firebase startup: Admin SDK projectId=${projectId}`);
+  }
 
   if (process.env.FIREBASE_SERVICE_ACCOUNT_KEY) {
     console.warn("Firebase startup: FIREBASE_SERVICE_ACCOUNT_KEY is set but ignored. Remove it to avoid config drift.");
@@ -62,12 +81,16 @@ const validateFirebaseEnv = () => {
     throw new Error(`Firebase configuration is incomplete. Missing: ${missingVars.join(", ")}`);
   }
 
+  const expectedEmailSuffix = `@${projectId}.iam.gserviceaccount.com`;
+  if (clientEmail && !clientEmail.endsWith(expectedEmailSuffix)) {
+    console.warn(
+      `Firebase startup: FIREBASE_CLIENT_EMAIL does not match FIREBASE_PROJECT_ID (expected suffix ${expectedEmailSuffix})`
+    );
+  }
+
   const normalizedPrivateKey = normalizePrivateKey(process.env.FIREBASE_PRIVATE_KEY);
 
-  if (
-    !normalizedPrivateKey.includes("BEGIN PRIVATE KEY") ||
-    !normalizedPrivateKey.includes("END PRIVATE KEY")
-  ) {
+  if (!normalizedPrivateKey.includes("BEGIN PRIVATE KEY") || !normalizedPrivateKey.includes("END PRIVATE KEY")) {
     console.error("Firebase startup: FIREBASE_PRIVATE_KEY malformed");
     throw new Error('Firebase service account is invalid: "private_key" is not a valid PEM block');
   }
@@ -87,6 +110,7 @@ const initializeFirebaseAdmin = () => {
   try {
     admin.initializeApp({
       credential: admin.credential.cert(serviceAccount),
+      projectId: process.env.FIREBASE_PROJECT_ID,
     });
     initialized = true;
     console.log("Firebase Admin Initialized");
@@ -97,6 +121,8 @@ const initializeFirebaseAdmin = () => {
   }
 };
 
+export const getConfiguredFirebaseProjectId = () => process.env.FIREBASE_PROJECT_ID?.trim() || null;
+
 export const verifyFirebaseToken = async (token) => {
   if (!token || typeof token !== "string") {
     throw new Error("Firebase token is required");
@@ -104,10 +130,30 @@ export const verifyFirebaseToken = async (token) => {
 
   initializeFirebaseAdmin();
 
+  const tokenPayload = decodeJwtPayload(token);
+  const expectedProjectId = getConfiguredFirebaseProjectId();
+
+  if (tokenPayload?.aud && expectedProjectId && tokenPayload.aud !== expectedProjectId) {
+    console.error("Firebase token project mismatch before verifyIdToken", {
+      tokenAud: tokenPayload.aud,
+      expectedProjectId,
+      tokenIss: tokenPayload.iss || null,
+    });
+  }
+
   try {
     return await admin.auth().verifyIdToken(token);
-  } catch (_error) {
-    throw new Error("Invalid Firebase token");
+  } catch (error) {
+    console.error("Firebase verifyIdToken failed", {
+      code: error?.code || "unknown",
+      message: error?.message || "verifyIdToken failed",
+      tokenAud: tokenPayload?.aud || null,
+      expectedProjectId,
+      tokenIss: tokenPayload?.iss || null,
+    });
+    const verificationError = new Error(error?.message || "Invalid Firebase token");
+    verificationError.code = error?.code || "auth/invalid-token";
+    throw verificationError;
   }
 };
 

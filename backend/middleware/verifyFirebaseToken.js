@@ -6,11 +6,23 @@ const verifyFirebaseToken = async (req, res, next) => {
   try {
     const authHeader = req.headers.authorization || "";
     if (!authHeader.startsWith("Bearer ")) {
+      console.warn("Auth middleware: missing Bearer Authorization header", { path: req.path });
       return sendError(res, "Authorization token is required", 401);
     }
 
-    const token = authHeader.split(" ")[1];
+    const token = authHeader.slice("Bearer ".length).trim();
+    if (!token) {
+      console.warn("Auth middleware: empty Bearer token", { path: req.path });
+      return sendError(res, "Authorization token is required", 401);
+    }
+
     const decodedToken = await verifyFirebaseTokenWithAdmin(token);
+
+    console.info("Auth middleware: token verified", {
+      path: req.path,
+      uid: decodedToken.uid,
+      aud: decodedToken.aud || null,
+    });
 
     req.user = {
       uid: decodedToken.uid,
@@ -25,7 +37,12 @@ const verifyFirebaseToken = async (req, res, next) => {
 
     return next();
   } catch (error) {
-    return sendError(res, "Invalid or expired Firebase token", 401, [error.message]);
+    console.warn("Auth middleware: token rejected", {
+      path: req.path,
+      code: error?.code || "unknown",
+      message: error?.message || "Invalid Firebase token",
+    });
+    return sendError(res, "Invalid or expired Firebase token", 401, [error?.message || "Invalid Firebase token"]);
   }
 };
 

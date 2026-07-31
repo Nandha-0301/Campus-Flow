@@ -48,7 +48,7 @@ const Login = () => {
     let lastError;
     for (let attempt = 1; attempt <= attempts; attempt += 1) {
       try {
-        return await getMe(firebaseUser);
+        return await getMe(firebaseUser, { forceRefresh: attempt === 1 });
       } catch (error) {
         lastError = error;
         const status = error?.response?.status;

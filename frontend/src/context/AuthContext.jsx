@@ -24,14 +24,18 @@ export const AuthProvider = ({ children }) => {
   const [firebaseUid, setFirebaseUid] = useState(null);
   const bootstrapGenerationRef = useRef(0);
 
-  const syncUserFromBackend = useCallback(async (prefetchedMe = null, firebaseUser = auth.currentUser) => {
+  const syncUserFromBackend = useCallback(async (prefetchedMe = null, firebaseUser = auth.currentUser, options = {}) => {
     if (!firebaseUser) {
       setUser(null);
       setRole(null);
       return null;
     }
 
-    const me = prefetchedMe || (await getMe(firebaseUser));
+    const forceRefresh = Boolean(options.forceRefresh);
+    let me = prefetchedMe;
+    if (!me) {
+      me = await getMe(firebaseUser, { forceRefresh });
+    }
     if (!me?.user) {
       setUser(null);
       setRole(null);
@@ -71,23 +75,40 @@ export const AuthProvider = ({ children }) => {
       });
 
       try {
-        await syncUserFromBackend(null, firebaseUser);
+        await firebaseUser.getIdToken(true);
+        await syncUserFromBackend(null, firebaseUser, { forceRefresh: true });
       } catch (err) {
+        let authError = err;
         const status = err?.response?.status;
-        console.error("Auth bootstrap getMe failed:", {
-          status: status || "network",
-          message: err?.response?.data?.message || err.message,
-        });
+
         if (status === 401 || status === 403) {
           try {
-            await signOut(auth);
-          } catch (signOutError) {
-            console.error("Failed to sign out after auth error:", signOutError);
+            await syncUserFromBackend(null, firebaseUser, { forceRefresh: true });
+            authError = null;
+          } catch (retryError) {
+            authError = retryError;
           }
-          if (bootstrapGenerationRef.current === generation) {
-            setUser(null);
-            setRole(null);
-            setFirebaseUid(null);
+        }
+
+        if (authError) {
+          console.error("Auth bootstrap getMe failed:", {
+            status: authError?.response?.status || "network",
+            message: authError?.response?.data?.message || authError.message,
+            errors: authError?.response?.data?.errors || null,
+          });
+
+          const finalStatus = authError?.response?.status;
+          if (finalStatus === 401 || finalStatus === 403) {
+            try {
+              await signOut(auth);
+            } catch (signOutError) {
+              console.error("Failed to sign out after auth error:", signOutError);
+            }
+            if (bootstrapGenerationRef.current === generation) {
+              setUser(null);
+              setRole(null);
+              setFirebaseUid(null);
+            }
           }
         }
       } finally {

@@ -33,11 +33,11 @@ const Signup = () => {
 
   const sleep = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
 
-  const fetchMeWithRetry = async (attempts = 3) => {
+  const fetchMeWithRetry = async (firebaseUser, attempts = 3) => {
     let lastError;
     for (let attempt = 1; attempt <= attempts; attempt += 1) {
       try {
-        return await getMe(auth.currentUser);
+        return await getMe(firebaseUser, { forceRefresh: attempt === 1 });
       } catch (err) {
         lastError = err;
         const status = err?.response?.status;
@@ -65,19 +65,19 @@ const Signup = () => {
 
       let me;
       try {
-        me = await fetchMeWithRetry();
-      } catch (fetchErr) {
-        if (fetchErr?.response?.status !== 404) {
-          throw fetchErr;
-        }
-        await registerUser({ name, email, role: selectedRole }, auth.currentUser);
-        me = await fetchMeWithRetry();
+      me = await fetchMeWithRetry(auth.currentUser);
+    } catch (fetchErr) {
+      if (fetchErr?.response?.status !== 404) {
+        throw fetchErr;
       }
+      await registerUser({ name, email, role: selectedRole }, auth.currentUser);
+      me = await fetchMeWithRetry(auth.currentUser);
+    }
 
-      if (!me?.user?.role) {
-        await registerUser({ name, email, role: selectedRole }, auth.currentUser);
-        me = await fetchMeWithRetry();
-      }
+    if (!me?.user?.role) {
+      await registerUser({ name, email, role: selectedRole }, auth.currentUser);
+      me = await fetchMeWithRetry(auth.currentUser);
+    }
 
       const backendUser = await syncUserFromBackend(me, auth.currentUser);
       if (backendUser?.role && rolePathMap[backendUser.role]) {

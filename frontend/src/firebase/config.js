@@ -16,4 +16,8 @@ const app = initializeApp(firebaseConfig);
 const auth = getAuth(app);
 const googleProvider = new GoogleAuthProvider();
 
+if (import.meta.env.PROD && firebaseConfig.projectId) {
+  console.info("Firebase client initialized", { projectId: firebaseConfig.projectId });
+}
+
 export { auth, googleProvider };

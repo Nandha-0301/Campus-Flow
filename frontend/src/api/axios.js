@@ -25,12 +25,16 @@ const resolveApiBaseURL = () => {
 
 const normalizedBaseURL = resolveApiBaseURL();
 
-export const getAuthHeaderForUser = async (firebaseUser = auth.currentUser) => {
+export const getAuthHeaderForUser = async (firebaseUser = auth.currentUser, forceRefresh = false) => {
   if (!firebaseUser) {
     throw new Error("No authenticated Firebase user available");
   }
 
-  const token = await firebaseUser.getIdToken();
+  const token = await firebaseUser.getIdToken(forceRefresh);
+  if (!token) {
+    throw new Error("Firebase ID token was empty");
+  }
+
   return {
     Authorization: `Bearer ${token}`,
   };
@@ -46,9 +50,17 @@ const api = axios.create({
 api.interceptors.request.use(
   async (config) => {
     try {
+      const existingAuthorization = config.headers?.Authorization || config.headers?.authorization;
+      if (existingAuthorization) {
+        return config;
+      }
+
       if (auth.currentUser) {
-        const token = await auth.currentUser.getIdToken();
-        config.headers.Authorization = `Bearer ${token}`;
+        const forceRefresh = Boolean(config.forceRefreshToken);
+        const token = await auth.currentUser.getIdToken(forceRefresh);
+        if (token) {
+          config.headers.Authorization = `Bearer ${token}`;
+        }
       }
     } catch (error) {
       console.error("Error attaching Firebase token", error);
@@ -60,7 +72,7 @@ api.interceptors.request.use(
 
 api.interceptors.response.use(
   (response) => response,
-  (error) => {
+  async (error) => {
     const status = error.response?.status;
     const url = error.config?.url || "";
     const isAuthMe = url.includes("/auth/me");
@@ -69,12 +81,37 @@ api.interceptors.response.use(
       console.error("API ERROR:", error.response?.data || error);
     }
 
+    const originalConfig = error.config;
+    if (
+      status === 401 &&
+      originalConfig &&
+      !originalConfig._retriedWithFreshToken &&
+      auth.currentUser &&
+      !originalConfig.skipAuthRetry
+    ) {
+      originalConfig._retriedWithFreshToken = true;
+      try {
+        const freshToken = await auth.currentUser.getIdToken(true);
+        originalConfig.headers = {
+          ...(originalConfig.headers || {}),
+          Authorization: `Bearer ${freshToken}`,
+        };
+        console.info("API retry: refreshed Firebase ID token after 401", { url });
+        return api.request(originalConfig);
+      } catch (refreshError) {
+        console.warn("API retry: failed to refresh Firebase ID token", refreshError?.message || refreshError);
+      }
+    }
+
     if (status === 401) {
-      console.warn("Unauthorized request. Token may be expired.");
+      console.warn("Unauthorized request. Token may be expired or rejected by backend.", {
+        url,
+        message: error.response?.data?.message || null,
+        errors: error.response?.data?.errors || null,
+      });
     }
     return Promise.reject(error);
   }
 );
 
 export default api;
-

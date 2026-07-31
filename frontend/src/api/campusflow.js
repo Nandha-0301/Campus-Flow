@@ -16,18 +16,19 @@ const unwrapWithMeta = (response) => {
   return { data: payload, meta: undefined };
 };
 
-const withFirebaseUserConfig = async (config = {}, firebaseUser = null) => {
+const withFirebaseUserConfig = async (config = {}, firebaseUser = null, forceRefresh = false) => {
   if (!firebaseUser) {
     return config;
   }
 
-  const authHeaders = await getAuthHeaderForUser(firebaseUser);
+  const authHeaders = await getAuthHeaderForUser(firebaseUser, forceRefresh);
   return {
     ...config,
     headers: {
       ...(config.headers || {}),
       ...authHeaders,
     },
+    skipAuthRetry: true,
   };
 };
 
@@ -38,13 +39,20 @@ const put = async (url, payload, config) => unwrap(await api.put(url, payload, c
 const del = async (url, config) => unwrap(await api.delete(url, config));
 const patch = async (url, payload, config) => unwrap(await api.patch(url, payload, config));
 
-export const getMe = async (firebaseUser = null) => get("/auth/me", await withFirebaseUserConfig({}, firebaseUser));
+export const getMe = async (firebaseUser = null, { forceRefresh = false } = {}) =>
+  get("/auth/me", await withFirebaseUserConfig({}, firebaseUser, forceRefresh));
+
 export const getPublicSettings = async () => get("/auth/settings");
 
-export const validateRoleSelection = async (selectedRole, firebaseUser = null) =>
-  post("/auth/validate-role", { selectedRole }, await withFirebaseUserConfig({}, firebaseUser));
-export const registerUser = async (payload, firebaseUser = null) =>
-  post("/auth/register", payload, await withFirebaseUserConfig({}, firebaseUser));
+export const validateRoleSelection = async (selectedRole, firebaseUser = null, { forceRefresh = false } = {}) =>
+  post(
+    "/auth/validate-role",
+    { selectedRole },
+    await withFirebaseUserConfig({}, firebaseUser, forceRefresh)
+  );
+
+export const registerUser = async (payload, firebaseUser = null, { forceRefresh = false } = {}) =>
+  post("/auth/register", payload, await withFirebaseUserConfig({}, firebaseUser, forceRefresh));
 
 export const getSubjects = async () => {
   const response = await api.get("/subjects");

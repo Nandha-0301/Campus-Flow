@@ -47,6 +47,7 @@ export const getMe = async (req, res) => {
     const user = await User.findOne({ firebaseUID: uid }).select("_id firebaseUID name email role permissions createdAt").lean();
 
     if (!user) {
+      console.info("GET /auth/me: Firebase user not registered in MongoDB", { uid });
       return sendSuccess(res, { user: null, profile: null }, "User not registered");
     }
 
@@ -226,7 +227,14 @@ export const getPublicSettings = async (_req, res) => {
       defaultRole: "student",
     };
 
-    return sendSuccess(res, { settings: settings || fallback }, "Settings fetched successfully");
+    return sendSuccess(
+      res,
+      {
+        settings: settings || fallback,
+        firebaseProjectId: process.env.FIREBASE_PROJECT_ID || null,
+      },
+      "Settings fetched successfully"
+    );
   } catch (error) {
     return sendError(res, "Failed to fetch settings", 500, [error.message]);
   }

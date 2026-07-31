@@ -17,6 +17,17 @@ export const SettingsProvider = ({ children }) => {
       setError("");
       const response = await getPublicSettings();
       setSettings(response?.settings || response || null);
+
+      const backendProjectId = response?.firebaseProjectId;
+      const frontendProjectId = import.meta.env.VITE_FIREBASE_PROJECT_ID;
+      if (backendProjectId && frontendProjectId && backendProjectId !== frontendProjectId) {
+        console.error("Firebase project mismatch: frontend and backend use different Firebase projects", {
+          frontendProjectId,
+          backendProjectId,
+        });
+      } else if (backendProjectId && frontendProjectId) {
+        console.info("Firebase project alignment check passed", { projectId: frontendProjectId });
+      }
     } catch (err) {
       setError(err?.response?.data?.message || "Failed to load settings");
     } finally {
